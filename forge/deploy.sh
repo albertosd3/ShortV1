@@ -2,28 +2,48 @@
 set -euo pipefail
 
 # Forge deploy script for ShortV1
-# Assumes PHP 8.4 and site root points to this repository
+# This script supports two cases:
+# 1) Repo already contains a full Laravel app (composer.json present)
+# 2) Repo only contains the overlay/ folder — this script will bootstrap Laravel
 
-php -v
+echo "PHP version:" && php -v || true
 composer --version || true
 
-# Ensure SQLite file exists
+if [ ! -f composer.json ]; then
+  echo "No composer.json found. Bootstrapping a new Laravel app..."
+  # Create Laravel skeleton
+  composer create-project laravel/laravel . --no-interaction
+  # Require needed packages
+  composer require guzzlehttp/guzzle jenssegers/agent --no-interaction
+  # Apply overlay if exists in release
+  if [ -d overlay ]; then
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a overlay/ ./
+    else
+      cp -R overlay/. ./
+    fi
+  fi
+fi
+
+# Ensure .env exists
+if [ ! -f .env ] && [ -f .env.example ]; then
+  cp .env.example .env
+fi
+
+# Ensure SQLite setup
 mkdir -p database
 if [ ! -f database/database.sqlite ]; then
   : > database/database.sqlite
 fi
 
-# Ensure env vars
-if [ ! -f .env ]; then
-  cp .env.example .env || true
-fi
-
-# Force SQLite settings in .env if DB_CONNECTION not set
-if ! grep -q '^DB_CONNECTION=sqlite' .env; then
-  sed -i "s/^DB_CONNECTION=.*/DB_CONNECTION=sqlite/" .env || true
-fi
-if ! grep -q '^DB_DATABASE=' .env; then
-  echo "DB_DATABASE=$(pwd)/database/database.sqlite" >> .env
+# Ensure env values for SQLite
+if [ -f .env ]; then
+  if ! grep -q '^DB_CONNECTION=sqlite' .env; then
+    sed -i "s/^DB_CONNECTION=.*/DB_CONNECTION=sqlite/" .env || echo "DB_CONNECTION=sqlite" >> .env
+  fi
+  if ! grep -q '^DB_DATABASE=' .env; then
+    echo "DB_DATABASE=$(pwd)/database/database.sqlite" >> .env
+  fi
 fi
 
 php artisan down || true
